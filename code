@@ -1,0 +1,641 @@
+//Preprocessing of Data
+import pandas as pd
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import figure
+from collections import Counter
+import graphviz
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
+from sklearn import metrics
+
+#Declaring the columns of the dataframe.
+col = ['Date','Time','CO_GT','PT08_S1_CO','NMHC_GT','C6H6_GT','PT08_S2_NMHC','NOX_GT','PT08_S3_NOX','NO2_GT','PT08_S4_NO2','PT08_S5_O3','T','RH','AH']
+
+#list of integers that represent the indices of the columns.
+use = list(np.arange(len(col)))
+
+data = pd.read_csv('/content/Air_Quality.csv',sep = ';',decimal = ',', header = None, skiprows = 1, names = col, na_filter = True, na_values = -200, usecols = use)
+
+#Dropping the rows with all NaN values
+data.dropna(how='all',inplace=True)
+
+#Rows with at least 9 non-NaN values wont be dropped.
+data.dropna(thresh=9,axis=0,inplace=True)
+
+#Seperating the hour from time
+data['Hour'] = data['Time'].str.split('.').str[0].astype(int)
+
+#Seperating the month from date
+data['Month'] = data['Date'].str.split('/').str[1].astype(int)
+data['Day'] = data['Date'].str.split('/').str[0].astype(int)
+data['Year'] = data['Date'].str.split('/').str[2].astype(int)
+
+#Changing the format of the date
+data['Date'] = pd.to_datetime(data.Date, format='%d/%m/%Y')
+
+data.drop('NMHC_GT',axis=1,inplace=True)
+data.drop('Time',axis=1,inplace=True)
+data.drop('Date',axis = 1,inplace=True)
+
+data['CO_GT'] = data['CO_GT'].fillna(data.groupby(['Month','Hour'])['CO_GT'].transform('mean'))
+data['NOX_GT'] = data['NOX_GT'].fillna(data.groupby(['Month','Hour'])['NOX_GT'].transform('mean'))
+data['NO2_GT'] = data['NO2_GT'].fillna(data.groupby(['Month','Hour'])['NO2_GT'].transform('mean'))
+
+# Group the data by 'HOUR' and select the 'CO_GT' column
+grouped_data = data.groupby(['Hour'])['CO_GT']
+
+# Calculate the mean values for each 'HOUR' group
+hourly_means = grouped_data.transform('mean')
+
+# Fill missing values in the 'CO_GT' column with corresponding hourly means
+data['CO_GT'].fillna(hourly_means, inplace=True)
+
+grouped_data = data.groupby(['Hour'])['NOX_GT']
+hourly_means = grouped_data.transform('mean')
+data['NOX_GT'].fillna(hourly_means, inplace=True)
+
+grouped_data = data.groupby(['Hour'])['NO2_GT']
+hourly_means = grouped_data.transform('mean')
+data['NO2_GT'].fillna(hourly_means, inplace=True)
+
+data.reset_index(drop=True, inplace=True)
+
+data.drop('Year',axis = 1,inplace=True)
+data.drop('Day',axis = 1,inplace=True)
+data.drop('Month',axis = 1,inplace=True)
+data.drop('Hour',axis = 1,inplace=True)
+data.drop('T',axis = 1,inplace=True)
+
+data.hist(figsize = (40,10))
+plt.show()
+
+# To about the data we check their medians
+# print(data.mean())
+# print(data.median())
+
+print("After considering the above observations,we are setting the thresholds for the following:"+
+      "\nCO_GT: 8\nPT08_S1_CO: 1070 \nC6H6_GT: 9.1 \nPT08_S2_NMHC: 920 \nNOX_GT: 190 \nPT08_S3_NOX: 815",
+      "\nNO2_GT: 100 \nPT08_S4_NO2: 1460 \nPT08_S5_O3: 990 \nRH: 49.4 \nAH: 1.01 \nUsing the above thresholds, ",
+      "discretisation of various attributes is done.")
+
+temp = data.copy()
+temp['CO_GT'] = data['CO_GT'].apply(lambda x: 1 if x >= 8 else 0)
+temp['PT08_S1_CO'] = data['PT08_S1_CO'].apply(lambda x: 1 if x >= 1070 else 0)
+temp['C6H6_GT'] = data['C6H6_GT'].apply(lambda x: 1 if x >= 9.1 else 0)
+temp['PT08_S2_NMHC'] = data['PT08_S2_NMHC'].apply(lambda x: 1 if x >= 920 else 0)
+temp['NOX_GT'] = data['NOX_GT'].apply(lambda x: 1 if x >= 190 else 0)
+temp['PT08_S3_NOX'] = data['PT08_S3_NOX'].apply(lambda x: 1 if x >= 815 else 0)
+temp['NO2_GT'] = data['NO2_GT'].apply(lambda x: 1 if x >= 100 else 0)
+temp['PT08_S4_NO2'] = data['PT08_S4_NO2'].apply(lambda x: 1 if x >= 1460 else 0)
+temp['PT08_S5_O3'] = data['PT08_S5_O3'].apply(lambda x: 1 if x >= 990 else 0)
+temp['RH'] = data['RH'].apply(lambda x: 1 if x >= 49.4 else 0)
+temp['AH'] = data['AH'].apply(lambda x: 1 if x >= 1.01 else 0)
+
+data['AQI'] = temp.sum(axis = 1)
+data['AQI'] = data['AQI'].apply(lambda x : 1 if x >= data.shape[1]-3 else 0)
+datacolumns = data.columns
+datacolumns = list(datacolumns)
+datacolumns.append('None')
+
+
+Y = data['AQI']
+X = data.drop(['AQI'],axis = 1)
+Y = Y.values
+X = (X-np.mean(X,axis = 0))/np.std(X,axis = 0)
+X = X.values
+
+def split_data(X,Y,test_size = 0.2,random_state = 0):
+  np.random.seed(random_state)
+  test_size = int(test_size * len(X))
+  indices = np.arange(X.shape[0])
+  random.shuffle(indices)
+
+  train_indices = indices[test_size:]
+  test_indices = indices[:test_size]
+  X_train = [X[i] for i in train_indices]
+  Y_train = [Y[i] for i in train_indices]
+  X_test = [X[i] for i in test_indices]
+  Y_test = [Y[i] for i in test_indices]
+  return np.asarray(X_train), np.asarray(X_test), np.asarray(Y_train), np.asarray(Y_test)
+
+X_train, X_test, Y_train, Y_test = split_data( X, Y, test_size = 0.2, random_state = 0 )
+
+//Perceptron
+def step_function(x):
+    return 1 if x >= 0 else 0
+
+def predict(weights,bias,x):
+  return step_function(np.dot(x,weights)+bias)
+
+
+def accuracy(Y_test, Y_pred):
+    return np.sum(Y_test == Y_pred) / len(Y_test)
+
+def fit(x, y, learning_rate, epochs):
+    num_features = x.shape[1]
+    weights = np.zeros(num_features)
+    bias = 0
+
+    for i in range(epochs):
+        for j in range(x.shape[0]):
+            z = np.dot(x[j], weights) + bias
+            y_pred = step_function(z)
+
+            weights = weights + learning_rate * (y[j] - y_pred) * x[j]
+            bias = bias + learning_rate * (y[j] - y_pred)
+
+    return weights, bias
+
+weights, bias = fit(X_train, Y_train, 0.01, 200)
+
+predi = []
+for i in range(X_test.shape[0]):
+  predi.append(predict(weights,bias,X_test[i]))
+predi = np.array(predi)
+
+ac1 = accuracy(Y_test,predi)
+print(ac1)
+print("\n")
+cm1 = confusion_matrix(Y_test,predi)
+
+//Fisher LDA
+def accuracy(Y_test, Y_pred):
+    return np.sum(Y_test == Y_pred) / len(Y_test)
+
+mu_pos = np.mean(X_train[Y_train == 1], axis=0)
+mu_neg = np.mean(X_train[Y_train == 0], axis=0)
+
+sigma_pos = np.std(X_train[Y_train == 1], axis=0)
+sigma_neg = np.std(X_train[Y_train == 0], axis=0)
+
+Sw = (np.square(sigma_pos) + np.square(sigma_neg)) / 2
+w = (mu_pos - mu_neg) / Sw
+w = w / np.linalg.norm(w)
+
+X_train_lda = np.dot(X_train, w)
+mu_pos_lda = np.mean(X_train_lda[Y_train == 1])
+mu_neg_lda = np.mean(X_train_lda[Y_train == 0])
+
+sigma_pos_lda = np.std(X_train_lda[Y_train == 1])
+sigma_neg_lda = np.std(X_train_lda[Y_train == 0])
+
+threshold = (mu_pos_lda + mu_neg_lda) / 2
+
+plt.scatter(X_train_lda[Y_train == 1], np.zeros_like(X_train_lda[Y_train == 1]), label='positive')
+plt.scatter(X_train_lda[Y_train == 0], np.zeros_like(X_train_lda[Y_train == 0]), label='negative')
+
+plt.axvline(x=threshold, color='red', linestyle='--', label='decision boundary')
+plt.legend()
+plt.show()
+
+X_test_lda = np.dot(X_test, w)
+Y_pred = (X_test_lda >= threshold).astype(int)
+ac2 = accuracy(Y_test,Y_pred)
+print(ac2)
+print("\n")
+cm2 = confusion_matrix(Y_test,Y_pred)
+
+//Random Forest
+class Node:
+    def __init__(self, feature=12, threshold=None, left=None, right=None, *, value=None):
+        # Node constructor to initialize node attributes
+        self.feature = feature
+        self.threshold = threshold
+        self.left = left
+        self.right = right
+        self.value = value
+
+    def is_leaf_node(self):
+        # Check if the node is a leaf node (has a value assigned)
+        return self.value is not None
+
+class DecisionTree:
+    def __init__(self, min_samplessplit=2, max_depth=100, n_features=None):
+        # DecisionTree constructor to initialize tree parameters
+        self.min_samplessplit = min_samplessplit
+        self.max_depth = max_depth
+        self.n_features = n_features
+        self.root = None
+
+    def fit(self, X, y):
+        # Fit the decision tree to the training data
+        self.n_features = X.shape[1] if not self.n_features else min(X.shape[1], self.n_features)
+        self.root = self.grow_tree(X, y)
+        graph = self.plot_tree(self.root)
+        # s = str(j)
+        graph.render(filename='decision_tree', format='png', cleanup=True)
+
+        # Display the plot
+        img_path = 'decision_tree.png'
+        img = plt.imread(img_path)
+        plt.imshow(img)
+        plt.axis('tight')
+        plt.show()
+
+
+    def grow_tree(self, X, y, depth=0):
+        # Recursively grow the decision tree
+        n_samples, n_features = X.shape
+        n_labels = len(np.unique(y))
+
+        # Base cases: maximum depth reached, pure node, or not enough samples
+        if depth >= self.max_depth or n_labels == 1 or n_samples < self.min_samplessplit:
+            leaf_value = self.mostCommon_Label(y)
+            return Node(value=leaf_value)
+
+        # Randomly select a subset of features
+        feature_indices = np.random.choice(n_features, self.n_features, replace=False)
+        best_feature, best_threshold = self.bestsplit(X, y, feature_indices)
+
+        # Split the data based on the best feature and threshold
+        left_indices, right_indices = self.split(X[:, best_feature], best_threshold)
+
+        # Recursively grow the left and right subtrees
+        left = self.grow_tree(X[left_indices, :], y[left_indices], depth + 1)
+        right = self.grow_tree(X[right_indices, :], y[right_indices], depth + 1)
+
+        return Node(best_feature, best_threshold, left, right)
+
+    def bestsplit(self, X, y, feature_indices):
+        # Find the best feature and threshold for splitting
+        best_gain = -1
+        split_feature, split_threshold = None, None
+
+        for feature_index in feature_indices:
+            X_column = X[:, feature_index]
+            thresholds = np.unique(X_column)
+
+            for threshold in thresholds:
+                gain = self.info_gain(y, X_column, threshold)
+
+                if gain > best_gain:
+                    best_gain = gain
+                    split_feature = feature_index
+                    split_threshold = threshold
+
+        return split_feature, split_threshold
+
+    def info_gain(self, y, X_column, threshold):
+        # Calculate information gain for a split
+        parent_entropy = self.entropy(y)
+        left_indices, right_indices = self.split(X_column, threshold)
+
+        if len(left_indices) == 0 or len(right_indices) == 0:
+            return 0
+
+        n = len(y)
+        n_left, n_right = len(left_indices), len(right_indices)
+        entropy_left, entropy_right = self.entropy(y[left_indices]), self.entropy(y[right_indices])
+        child_entropy = (n_left / n) * entropy_left + (n_right / n) * entropy_right
+        information_gain = parent_entropy - child_entropy
+
+        return information_gain
+
+    def split(self, X_column, split_threshold):
+        # Split indices based on a threshold
+        left_indices = np.argwhere(X_column <= split_threshold).flatten()
+        right_indices = np.argwhere(X_column > split_threshold).flatten()
+
+        return left_indices, right_indices
+
+    def entropy(self, y):
+        # Calculate entropy of a set of labels
+        label_histogram = np.bincount(y)
+        probabilities = label_histogram / len(y)
+
+        return -np.sum([p * np.log(p) for p in probabilities if p > 0])
+
+    def mostCommon_Label(self, y):
+        # Find the most common label in a set of labels
+        counter = Counter(y)
+        most_common_label = counter.most_common(1)[0][0]
+
+        return most_common_label
+
+    def predict(self, X):
+        # Make predictions using the trained decision tree
+        return np.array([self.traverseTree(x, self.root) for x in X])
+
+    def traverseTree(self, x, node):
+        # Traverse the decision tree to make a prediction
+        if node.is_leaf_node():
+            return node.value
+
+        if x[node.feature] <= node.threshold:
+            return self.traverseTree(x, node.left)
+        else:
+            return self.traverseTree(x, node.right)
+
+    def plot_tree(self,node, graph=None, parent_name=None, side='root', depth=0):
+        if graph is None:
+            graph = graphviz.Digraph(format='png')
+            graph.attr('node', shape='box')
+
+        name = f"{side}_{depth}_{datacolumns[node.feature]}_{str(node.threshold)}"
+
+        if parent_name is not None:
+            graph.edge(parent_name, name)
+
+        if node.left is not None:
+            self.plot_tree(node.left, graph, name, 'L', depth + 1)
+
+        if node.right is not None:
+            self.plot_tree(node.right, graph, name, 'R', depth + 1)
+
+        return graph
+
+class RandomForest:
+    def __init__(self, n_trees=10, max_depth=10, min_samplessplit=2, n_features=None):
+        # RandomForest constructor to initialize ensemble parameters
+        self.n_trees = n_trees
+        self.max_depth = max_depth
+        self.min_samplessplit = min_samplessplit
+        self.n_features = n_features
+        self.trees = []
+
+    def fit(self, X, y):
+        # Fit the random forest to the training data
+        self.trees = []
+        for _ in range(self.n_trees):
+            tree = DecisionTree(min_samplessplit=self.min_samplessplit, max_depth=self.max_depth, n_features=self.n_features)
+            X_sample, y_sample = self.bootstrap_samples(X, y)
+            tree.fit(X_sample, y_sample)
+            self.trees.append(tree)
+
+    def bootstrap_samples(self, X, y):
+        # Create a bootstrap sample of the data
+        n_samples = X.shape[0]
+        indices = np.random.choice(n_samples, n_samples, replace=True)
+
+        return X[indices], y[indices]
+
+    def mostCommon_Label(self, y):
+        # Find the most common label in a set of labels
+        counter = Counter(y)
+        most_common_label = counter.most_common(1)[0][0]
+
+        return most_common_label
+
+    def predict(self, X):
+        # Make predictions using the trained random forest
+        predictions = np.array([tree.predict(X) for tree in self.trees])
+        tree_predictions = np.swapaxes(predictions, 0, 1)
+        predictions = np.array([self.mostCommon_Label(pred) for pred in tree_predictions])
+
+        return predictions
+
+random_forest = RandomForest()
+random_forest.fit(X_train, Y_train)
+predictions = random_forest.predict(X_test)
+
+def accuracy(true_labels, predicted_labels):
+    # Calculate accuracy
+    return np.sum(true_labels == predicted_labels) / len(true_labels)
+
+acc3 = accuracy(Y_test, predictions)
+print("Accuracy:", acc3)
+print("\n")
+cm3 = confusion_matrix(Y_test,predictions)
+
+//XG Boost (Based on research literature)
+class Node:
+    def __init__(self, feature_index=12, threshold=None, left=None, right=None, value=None):
+        # Node constructor to initialize node attributes
+        self.feature_index = feature_index
+        self.threshold = threshold
+        self.left = left
+        self.right = right
+        self.value = value
+
+class DecisionTree:
+    def __init__(self, max_depth=2):
+        # DecisionTree constructor to initialize tree parameters
+        self.max_depth = max_depth
+
+    def fit(self, X, y):
+        # Fit the decision tree to the training data
+        self.n_classes = len(np.unique(y))
+        self.n_features = X.shape[1]
+        self.tree = self.grow_tree(X, y)
+        graph = self.plot_tree(self.tree)
+        graph.render(filename='decision_tree', format='png', cleanup=True)
+
+        # Display the plot
+        img_path = 'decision_tree.png'
+        img = plt.imread(img_path)
+        plt.imshow(img)
+        plt.axis('tight')
+        plt.show()
+
+    def grow_tree(self, X, y, depth=0):
+        # Recursively grow the decision tree
+        if (depth >= self.max_depth) or (len(np.unique(y)) == 1):
+            return Node(value=self.mostCommon_Label(y))
+
+        feature_index, threshold = self.bestsplit(X, y)
+        left_indices, right_indices = self.split(X[:, feature_index], threshold)
+
+        left = self.grow_tree(X[left_indices, :], y[left_indices], depth + 1)
+        right = self.grow_tree(X[right_indices, :], y[right_indices], depth + 1)
+
+        return Node(feature_index, threshold, left, right)
+
+    def bestsplit(self, X, y):
+        # Find the best feature and threshold for splitting
+        best_gini = 1
+        best_feature, best_threshold = None, None
+
+        for feature_index in range(self.n_features):
+            thresholds = np.unique(X[:, feature_index])
+            for threshold in thresholds:
+                left_indices, right_indices = self.split(X[:, feature_index], threshold)
+                if len(left_indices) == 0 or len(right_indices) == 0:
+                    continue
+
+                gini = self.gini_Impurity(y, left_indices, right_indices)
+                if gini < best_gini:
+                    best_gini = gini
+                    best_feature = feature_index
+                    best_threshold = threshold
+
+        return best_feature, best_threshold
+
+    def split(self, feature, threshold):
+        # Split indices based on a threshold
+        left_indices = np.where(feature < threshold)[0]
+        right_indices = np.where(feature >= threshold)[0]
+        return left_indices, right_indices
+
+    def gini_Impurity(self, y, left_indices, right_indices):
+        # Calculate Gini impurity for a split
+        left_gini = self.Gini(y[left_indices])
+        right_gini = self.Gini(y[right_indices])
+        total_samples = len(left_indices) + len(right_indices)
+        return (len(left_indices) / total_samples) * left_gini + (len(right_indices) / total_samples) * right_gini
+
+    def Gini(self, y):
+        # Calculate Gini impurity for a set of labels
+        if len(y) == 0:
+            return 0
+        values, counts = np.unique(y, return_counts=True)
+        probabilities = counts / len(y)
+        return 1 - np.sum(probabilities ** 2)
+
+    def mostCommon_Label(self, y):
+        # Find the most common label in a set of labels
+        values, counts = np.unique(y, return_counts=True)
+        return counts.argmax()
+
+    def predict(self, X):
+        # Make predictions using the trained decision tree
+        return [self._predict_tree(x, self.tree) for x in X]
+
+    def _predict_tree(self, x, node):
+        # Traverse the decision tree to make a prediction
+        if node.value is not None:
+            return node.value
+
+        if x[node.feature_index] < node.threshold:
+            return self._predict_tree(x, node.left)
+        else:
+            return self._predict_tree(x, node.right)
+
+    def plot_tree(self,node, graph=None, parent_name=None, side='root', depth=0):
+        if graph is None:
+            graph = graphviz.Digraph(format='png')
+            graph.attr('node', shape='box')
+
+        name = f"{side}_{depth}_{datacolumns[node.feature_index]}_{str(node.threshold)}"
+
+        if parent_name is not None:
+            graph.edge(parent_name, name)
+
+        if node.left is not None:
+            self.plot_tree(node.left, graph, name, 'L', depth + 1)
+
+        if node.right is not None:
+            self.plot_tree(node.right, graph, name, 'R', depth + 1)
+
+        return graph
+
+
+class XGBoostClassifier:
+    def __init__(self, n_estimators=100, learning_rate=0.1, max_depth=2):
+        # XGBoostClassifier constructor to initialize ensemble parameters
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        self.max_depth = max_depth
+        self.trees = []
+
+    def fit(self, X, y):
+        # Fit the XGBoost classifier to the training data
+        y_pred = np.zeros(len(y))
+        prev_sum = 0
+
+        for i in range(self.n_estimators):
+            residuals = self._compute_residuals(y, y_pred)
+            tree = DecisionTree(max_depth=self.max_depth)
+            tree.fit(X, residuals)
+            self.trees.append(tree)
+            update = tree.predict(X)
+            update = np.array(update)
+            y_pred += self.learning_rate * update
+
+            # Early stopping: stop if the loss increases
+            if i == 0:
+                prev_sum = np.sum(y - y_pred)
+            else:
+                if prev_sum > abs(np.sum(y - y_pred)):
+                    prev_sum = abs(np.sum(y - y_pred))
+                else:
+                    self.trees.pop()
+                    break
+
+    def predict(self, X):
+        # Make predictions using the trained XGBoost classifier
+        y_pred = np.zeros(X.shape[0])
+        for tree in self.trees:
+            update = tree.predict(X)
+            update = np.array(update)
+            y_pred += self.learning_rate * update
+
+        return np.round(y_pred)
+
+    def _compute_residuals(self, y, y_pred):
+        # Compute residuals for the XGBoost update
+        return y - y_pred
+
+clf = XGBoostClassifier(n_estimators=10, learning_rate=0.1, max_depth=5)
+clf.fit(X_train, Y_train)
+predictions = clf.predict(X_test)
+
+predictions = np.array(predictions)
+correct_predictions = np.sum(Y_test == predictions)
+ac4 = correct_predictions / len(Y_test)
+print(ac4)
+print("\n")
+cm4 = confusion_matrix(Y_test,predictions)
+
+//Comparison of insights drawn from the models
+plt.figure(figsize=(8, 6))
+sns.set(font_scale=1.2)  # Adjust the font size
+
+# Use seaborn's heatmap to create a color representation of the confusion matrix
+sns.heatmap(cm1, annot=True, fmt='g', cmap='Blues',
+            xticklabels=sorted(np.unique(Y_test)),
+            yticklabels=sorted(np.unique(Y_test)))
+
+# Set labels and title
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix')
+
+# Display the plot
+plt.show()
+print("\n")
+print(f"Accuracy of perceptron is: {ac1}")
+print("\n")
+
+plt.figure(figsize=(8, 6))
+sns.set(font_scale=1.2)
+
+sns.heatmap(cm2, annot=True, fmt='g', cmap='Blues',
+            xticklabels=sorted(np.unique(Y_test)),
+            yticklabels=sorted(np.unique(Y_test)))
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix')
+plt.show()
+print("\n")
+print(f"Accuracy of Fisher LDA is: {ac2}")
+print("\n")
+
+plt.figure(figsize=(8, 6))
+sns.set(font_scale=1.2)
+
+sns.heatmap(cm3, annot=True, fmt='g', cmap='Blues',
+            xticklabels=sorted(np.unique(Y_test)),
+            yticklabels=sorted(np.unique(Y_test)))
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix')
+plt.show()
+print("\n")
+print(f"Accuracy of Random Forest is: {acc3}")
+print("\n")
+
+plt.figure(figsize=(8, 6))
+sns.set(font_scale=1.2)
+
+sns.heatmap(cm4, annot=True, fmt='g', cmap='Blues',
+            xticklabels=sorted(np.unique(Y_test)),
+            yticklabels=sorted(np.unique(Y_test)))
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix')
+plt.show()
+print("\n")
+print(f"Accuracy of XGBoost is: {ac4}")
+print("\n")
